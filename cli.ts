@@ -42,9 +42,11 @@ function clampInt(value: number, min: number, max: number): number {
 
 function formatMemory(memory: any, index?: number): string {
   const prefix = index !== undefined ? `${index + 1}. ` : "";
+  const id = memory?.id ? String(memory.id) : "unknown";
   const date = new Date(memory.timestamp || memory.createdAt || Date.now()).toISOString().split('T')[0];
-  const text = memory.text.slice(0, 100) + (memory.text.length > 100 ? "..." : "");
-  return `${prefix}[${memory.category}:${memory.scope}] ${text} (${date})`;
+  const fullText = String(memory.text || "");
+  const text = fullText.slice(0, 100) + (fullText.length > 100 ? "..." : "");
+  return `${prefix}[${id}] [${memory.category}:${memory.scope}] ${text} (${date})`;
 }
 
 function formatJson(obj: any): string {
@@ -150,7 +152,7 @@ export function registerMemoryCLI(program: Command, context: CLIContext): void {
               if (result.sources.reranked) sources.push("reranked");
 
               console.log(
-                `${i + 1}. [${result.entry.category}:${result.entry.scope}] ${result.entry.text} ` +
+                `${i + 1}. [${result.entry.id}] [${result.entry.category}:${result.entry.scope}] ${result.entry.text} ` +
                 `(${(result.score * 100).toFixed(0)}%, ${sources.join('+')})`
               );
             });

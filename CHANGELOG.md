@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.0.19
+
+- UX: show memory IDs in `memory-pro list` and `memory-pro search` output, so users can delete entries without switching to JSON.
+- UX: include IDs in agent tool outputs (`memory_recall`, `memory_list`) for easier debugging and `memory_forget` follow-ups.
+
+## 1.0.18
+
+- Fix: sync `openclaw.plugin.json` version with `package.json`, so the OpenClaw plugin info shows the correct version.
+
+## 1.0.17
+
+- Fix: adaptive-retrieval now strips OpenClaw-injected timestamp prefixes like `[Mon YYYY-MM-DD HH:MM ...] ...` to avoid skewing length-based heuristics.
+- Improve: expanded SKIP/FORCE keyword patterns with Traditional Chinese variants.
+
 ## 1.0.16
 
 - Feat: expand memory capture triggers to support Traditional Chinese (繁體中文) in addition to Simplified Chinese, and improve category detection keywords.

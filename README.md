@@ -613,7 +613,7 @@ This prevents cross-bot memory pollution.
 ## CLI Commands
 
 ```bash
-# List memories
+# List memories (output includes the memory id)
 openclaw memory-pro list [--scope global] [--category fact] [--limit 20] [--json]
 
 # Search memories
@@ -623,6 +623,7 @@ openclaw memory-pro search "query" [--scope global] [--limit 10] [--json]
 openclaw memory-pro stats [--scope global] [--json]
 
 # Delete a memory by ID (supports 8+ char prefix)
+# Tip: copy the id shown by `memory-pro list` / `memory-pro search` (or use --json for full output)
 openclaw memory-pro delete <id>
 
 # Bulk delete with filters

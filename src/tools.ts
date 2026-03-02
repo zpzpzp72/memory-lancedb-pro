@@ -113,7 +113,7 @@ export function registerMemoryRecallTool(api: OpenClawPluginApi, context: ToolCo
               if (r.sources.bm25) sources.push("BM25");
               if (r.sources.reranked) sources.push("reranked");
 
-              return `${i + 1}. [${r.entry.category}:${r.entry.scope}] ${r.entry.text} (${(r.score * 100).toFixed(0)}%${sources.length > 0 ? `, ${sources.join('+')}` : ''})`;
+              return `${i + 1}. [${r.entry.id}] [${r.entry.category}:${r.entry.scope}] ${r.entry.text} (${(r.score * 100).toFixed(0)}%${sources.length > 0 ? `, ${sources.join('+')}` : ''})`;
             })
             .join("\n");
 
@@ -583,7 +583,7 @@ export function registerMemoryListTool(api: OpenClawPluginApi, context: ToolCont
           const text = entries
             .map((entry, i) => {
               const date = new Date(entry.timestamp).toISOString().split('T')[0];
-              return `${safeOffset + i + 1}. [${entry.category}:${entry.scope}] ${entry.text.slice(0, 100)}${entry.text.length > 100 ? '...' : ''} (${date})`;
+              return `${safeOffset + i + 1}. [${entry.id}] [${entry.category}:${entry.scope}] ${entry.text.slice(0, 100)}${entry.text.length > 100 ? '...' : ''} (${date})`;
             })
             .join('\n');
 
