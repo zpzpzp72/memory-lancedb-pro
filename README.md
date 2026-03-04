@@ -163,15 +163,37 @@ Filters out low-quality content at both auto-capture and tool-store stages:
   - `self_improvement_log`: write structured LRN/ERR/FEAT entries
   - `self_improvement_review`: summarize governance backlog (pending/high/promoted)
   - `self_improvement_extract_skill`: extract a reusable `SKILL.md` scaffold from a learning entry
+    - Trigger: explicit tool call by user/model (not background auto-trigger)
+    - Timing: on-demand, one-shot execution
+    - Inputs: explicit `learningId` and `skillName`
+    - Risk profile: low and controllable; fewer accidental writes
+    - Recommended mode: stabilize workflow first with human review/approval
 
 ### 9. memoryReflection
 
-- Reflect: `command:new` / `command:reset` generate reflection from recent session JSONL
-- Store: writes markdown reflection files under `memory/reflections/YYYY-MM-DD/HHMMSS.md`
-- Store (optional): persists reflection slices to LanceDB (`memoryReflection.storeToLanceDB`)
+- Trigger conditions:
+  - `sessionStrategy` must be `memoryReflection` (default).
+  - Trigger event is `command:new` / `command:reset`.
+  - Reflection generation is skipped when session context is incomplete (for example missing `cfg`, session file, or readable conversation content).
+- Reflection runner chain:
+  - First try embedded runner (`runEmbeddedPiAgent`).
+  - If embedded path fails, automatically fallback to `openclaw agent --local --json`.
+  - Only if both fail, write minimal fallback reflection text.
+- Reflect output:
+  - Structured output should use `## Invariants & Reflections` as the final section.
+  - Markdown artifacts are written under `memory/reflections/YYYY-MM-DD/`.
+  - Filename uses high-resolution timestamp + agent/session token (with conflict-safe suffix), for example `HHMMSSmmm-agent-session[-xxxxxx].md`.
+- Store to LanceDB (optional):
+  - Controlled by `memoryReflection.storeToLanceDB` (effective only under `sessionStrategy=memoryReflection`).
+  - Only non-fallback reflections are eligible for LanceDB persistence.
+  - Additional similarity dedupe is applied before write (`> 0.97` hit skips storing).
 - Dedicated agent (optional): run reflection generation with another agent via `memoryReflection.agentId` (e.g. `memory-distiller`)
+  - If configured `memoryReflection.agentId` is not found in `cfg.agents.list`, plugin logs a clear warning and falls back to runtime agent id.
+  - For embedded runs, the plugin resolves the target agent's primary model ref (`provider/model`) and passes `provider` + `model` explicitly.
 - Inherit: `before_agent_start` injects `<inherited-rules>` from reflection invariants
 - Derive: `before_prompt_build` injects `<derived-focus>` and `<error-detected>` blocks
+  - `<derived-focus>` is sourced from the latest recent non-fallback reflection and skips placeholder lines.
+  - Reflection-derived lines are extracted with `reflect|inherit|derive|change|apply` matching.
 - Error loop: `after_tool_call` captures and deduplicates tool error signatures for reminder/reflection context
 
 ### 10. Auto-Capture & Auto-Recall

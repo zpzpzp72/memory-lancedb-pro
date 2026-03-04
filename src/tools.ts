@@ -7,6 +7,7 @@ import { Type } from "@sinclair/typebox";
 import { stringEnum } from "openclaw/plugin-sdk";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import type { MemoryRetriever, RetrievalResult } from "./retriever.js";
 import type { MemoryStore } from "./store.js";
@@ -73,7 +74,7 @@ function resolveWorkspaceDir(toolCtx: unknown, fallback?: string): string {
   const runtimePath = typeof runtime?.workspaceDir === "string" ? runtime.workspaceDir.trim() : "";
   if (runtimePath) return runtimePath;
   if (fallback && fallback.trim()) return fallback;
-  return "/root/.openclaw/workspace";
+  return join(homedir(), ".openclaw", "workspace");
 }
 
 function todayYmd(): string {

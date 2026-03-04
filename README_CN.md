@@ -163,15 +163,37 @@ Query → BM25 FTS ─────┘
   - `self_improvement_log`：写入结构化 LRN/ERR/FEAT 条目
   - `self_improvement_review`：汇总治理 backlog（pending/high/promoted）
   - `self_improvement_extract_skill`：从学习条目提炼可复用 `SKILL.md` 脚手架
+    - 触发者：由用户/模型显式调用工具触发（非后台自动触发）
+    - 时机：按需、单次执行
+    - 输入：需明确提供 `learningId` 与 `skillName`
+    - 风险画像：低风险、可控，误写概率更低
+    - 推荐方式：先稳定流程，再由人工把关质量
 
 ### 9. memoryReflection
 
-- Reflect：`command:new` / `command:reset` 基于最近 Session JSONL 生成反思
-- Store：反思文件写入 `memory/reflections/YYYY-MM-DD/HHMMSS.md`
-- Store（可选）：将反思切片写入 LanceDB（`memoryReflection.storeToLanceDB`）
+- 触发条件：
+  - `sessionStrategy` 必须为 `memoryReflection`（默认）。
+  - 触发事件为 `command:new` / `command:reset`。
+  - 若会话上下文不完整（例如缺少 `cfg`、session 文件、可读对话内容），会跳过反思生成。
+- 反思执行链：
+  - 先尝试 embedded runner（`runEmbeddedPiAgent`）。
+  - 若 embedded 路径失败，自动回退到 `openclaw agent --local --json`。
+  - 仅当两者都失败时，才写入最小 fallback 反思文本。
+- Reflect 产物：
+  - 结构化输出的末节固定为 `## Invariants & Reflections`。
+  - Markdown 产物写入 `memory/reflections/YYYY-MM-DD/`。
+  - 文件名为高精度时间戳 + agent/session token（带冲突后缀），例如 `HHMMSSmmm-agent-session[-xxxxxx].md`。
+- 写入 LanceDB（可选）：
+  - 由 `memoryReflection.storeToLanceDB` 控制（且仅在 `sessionStrategy=memoryReflection` 下生效）。
+  - 只有非 fallback 反思才会进入 LanceDB 持久化流程。
+  - 写入前会做相似度去重（命中 `> 0.97` 则跳过入库）。
 - 独立代理（可选）：通过 `memoryReflection.agentId` 指定用于反思生成的代理（例如 `memory-distiller`）
+  - 若配置的 `memoryReflection.agentId` 不在 `cfg.agents.list` 中，插件会明确 `warn` 并回退到当前 runtime agent id。
+  - 对 embedded 运行，插件会解析目标代理主模型引用（`provider/model`），并显式传入 `provider` 与 `model`。
 - Inherit：`before_agent_start` 注入 `<inherited-rules>`（稳定规则）
 - Derive：`before_prompt_build` 注入 `<derived-focus>` 与 `<error-detected>`
+  - `<derived-focus>` 仅取最近且非 fallback 的反思，并过滤占位行。
+  - 派生行提取关键词：`reflect|inherit|derive|change|apply`。
 - 错误闭环：`after_tool_call` 捕获并去重工具错误签名，用于提醒与反思上下文
 
 ### 10. 自动捕获 & 自动回忆
