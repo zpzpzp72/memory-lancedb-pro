@@ -1362,7 +1362,9 @@ const memoryLanceDBProPlugin = {
       usedFallback: boolean;
     }) => {
       const slices = extractReflectionSlices(params.reflectionText);
+      const dateYmd = new Date(params.runAt).toISOString().split("T")[0];
       const payload = [
+        `reflection:${params.scope} · ${dateYmd}`,
         `Session Reflection (${new Date(params.runAt).toISOString()})`,
         `Session Key: ${params.sessionKey}`,
         `Session ID: ${params.sessionId}`,
@@ -1386,7 +1388,7 @@ const memoryLanceDBProPlugin = {
       await store.store({
         text: payload,
         vector,
-        category: "decision",
+        category: "reflection",
         scope: params.scope,
         importance: 0.75,
         metadata: JSON.stringify({

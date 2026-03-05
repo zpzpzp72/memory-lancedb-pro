@@ -25,6 +25,7 @@ export const MEMORY_CATEGORIES = [
   "fact",
   "decision",
   "entity",
+  "reflection",
   "other",
 ] as const;
 
@@ -67,12 +68,36 @@ function sanitizeMemoryForSerialization(results: RetrievalResult[]) {
   return results.map((r) => ({
     id: r.entry.id,
     text: r.entry.text,
-    category: r.entry.category,
+    category: getDisplayCategoryTag(r.entry),
+    rawCategory: r.entry.category,
     scope: r.entry.scope,
     importance: r.entry.importance,
     score: r.score,
     sources: r.sources,
   }));
+}
+
+function parseEntryMetadata(entry: { metadata?: string }): Record<string, unknown> {
+  if (!entry.metadata) return {};
+  try {
+    const parsed = JSON.parse(entry.metadata);
+    return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
+}
+
+function isReflectionEntry(entry: { category: string; metadata?: string }): boolean {
+  if (entry.category === "reflection") return true;
+  const metadata = parseEntryMetadata(entry);
+  return metadata.type === "memory-reflection";
+}
+
+function getDisplayCategoryTag(entry: { category: string; scope: string; metadata?: string }): string {
+  if (isReflectionEntry(entry)) {
+    return `reflection:${entry.scope}`;
+  }
+  return `${entry.category}:${entry.scope}`;
 }
 
 function resolveWorkspaceDir(toolCtx: unknown, fallback?: string): string {
@@ -469,7 +494,8 @@ export function registerMemoryRecallTool(
               if (r.sources.bm25) sources.push("BM25");
               if (r.sources.reranked) sources.push("reranked");
 
-              return `${i + 1}. [${r.entry.id}] [${r.entry.category}:${r.entry.scope}] ${r.entry.text} (${(r.score * 100).toFixed(0)}%${sources.length > 0 ? `, ${sources.join("+")}` : ""})`;
+              const categoryTag = getDisplayCategoryTag(r.entry);
+              return `${i + 1}. [${r.entry.id}] [${categoryTag}] ${r.entry.text} (${(r.score * 100).toFixed(0)}%${sources.length > 0 ? `, ${sources.join("+")}` : ""})`;
             })
             .join("\n");
 
@@ -1176,7 +1202,8 @@ export function registerMemoryListTool(
               const date = new Date(entry.timestamp)
                 .toISOString()
                 .split("T")[0];
-              return `${safeOffset + i + 1}. [${entry.id}] [${entry.category}:${entry.scope}] ${entry.text.slice(0, 100)}${entry.text.length > 100 ? "..." : ""} (${date})`;
+              const categoryTag = getDisplayCategoryTag(entry);
+              return `${safeOffset + i + 1}. [${entry.id}] [${categoryTag}] ${entry.text.slice(0, 100)}${entry.text.length > 100 ? "..." : ""} (${date})`;
             })
             .join("\n");
 
@@ -1192,7 +1219,8 @@ export function registerMemoryListTool(
               memories: entries.map((e) => ({
                 id: e.id,
                 text: e.text,
-                category: e.category,
+                category: getDisplayCategoryTag(e),
+                rawCategory: e.category,
                 scope: e.scope,
                 importance: e.importance,
                 timestamp: e.timestamp,
