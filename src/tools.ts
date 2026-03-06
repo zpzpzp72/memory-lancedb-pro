@@ -4,7 +4,6 @@
  */
 
 import { Type } from "@sinclair/typebox";
-import { stringEnum } from "openclaw/plugin-sdk";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 import type { MemoryRetriever, RetrievalResult } from "./retriever.js";
 import type { MemoryStore } from "./store.js";
@@ -28,6 +27,13 @@ export const MEMORY_CATEGORIES = [
   "entity",
   "other",
 ] as const;
+
+function stringEnum<T extends readonly [string, ...string[]]>(values: T) {
+  return Type.Unsafe<T[number]>({
+    type: "string",
+    enum: [...values],
+  });
+}
 
 interface ToolContext {
   retriever: MemoryRetriever;
