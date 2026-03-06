@@ -26,6 +26,11 @@ import { shouldSkipRetrieval } from "./src/adaptive-retrieval.js";
 import { AccessTracker } from "./src/access-tracker.js";
 import { runWithReflectionTransientRetryOnce } from "./src/reflection-retry.js";
 import { resolveReflectionSessionSearchDirs, stripResetSuffix } from "./src/session-recovery.js";
+import {
+  storeReflectionToLanceDB,
+  loadAgentReflectionSlicesFromEntries,
+  DEFAULT_REFLECTION_DERIVED_MAX_AGE_MS,
+} from "./src/reflection-store.js";
 import { createMemoryCLI } from "./cli.js";
 
 // ============================================================================
@@ -173,7 +178,6 @@ const DEFAULT_REFLECTION_DEDUPE_ERROR_SIGNALS = true;
 const DEFAULT_REFLECTION_SESSION_TTL_MS = 30 * 60 * 1000;
 const DEFAULT_REFLECTION_MAX_TRACKED_SESSIONS = 200;
 const DEFAULT_REFLECTION_ERROR_SCAN_MAX_CHARS = 8_000;
-const DEFAULT_REFLECTION_DERIVED_MAX_AGE_MS = 2 * 60 * 60 * 1000;
 const REFLECTION_FALLBACK_MARKER = "(fallback) Reflection generation failed; storing minimal pointer only.";
 
 type ReflectionErrorSignal = {
@@ -1313,198 +1317,17 @@ const memoryLanceDBProPlugin = {
       return clipped;
     };
 
-    const parseSectionBullets = (markdown: string, heading: string): string[] => {
-      const lines = markdown.split(/\r?\n/);
-      const headingNeedle = `## ${heading}`.toLowerCase();
-      let inSection = false;
-      const collected: string[] = [];
-      for (const raw of lines) {
-        const line = raw.trim();
-        const lower = line.toLowerCase();
-        if (lower.startsWith("## ")) {
-          inSection = lower === headingNeedle;
-          continue;
-        }
-        if (!inSection) continue;
-        if (line.startsWith("- ") || line.startsWith("* ")) {
-          const normalized = line.slice(2).trim();
-          if (normalized) collected.push(normalized);
-        }
-      }
-      return collected;
-    };
-
-    const extractReflectionSlices = (reflectionText: string): { invariants: string[]; derived: string[] } => {
-      const isPlaceholderSlice = (line: string): boolean => {
-        const normalized = line.replace(/\*\*/g, "").trim();
-        if (!normalized) return true;
-        if (/^\(none( captured)?\)$/i.test(normalized)) return true;
-        if (/^(invariants?|reflections?|derived)[:：]$/i.test(normalized)) return true;
-        if (/apply this session'?s deltas next run/i.test(normalized)) return true;
-        if (/apply this session'?s distilled changes next run/i.test(normalized)) return true;
-        if (/investigate why embedded reflection generation failed/i.test(normalized)) return true;
-        return false;
-      };
-      const normalizeSliceLine = (line: string): string =>
-        line
-          .replace(/\*\*/g, "")
-          .replace(/^(invariants?|reflections?|derived)[:：]\s*/i, "")
-          .trim();
-      const cleanSliceLines = (lines: string[]): string[] =>
-        lines
-          .map(normalizeSliceLine)
-          .filter((line) => !isPlaceholderSlice(line));
-      const isInvariantRuleLike = (line: string): boolean =>
-        /^(always|never|when\b|if\b|before\b|after\b|prefer\b|avoid\b|require\b|only\b|do not\b|must\b|should\b)/i.test(line) ||
-        /\b(must|should|never|always|prefer|avoid|required?)\b/i.test(line);
-      const isDerivedDeltaLike = (line: string): boolean =>
-        /^(this run|next run|going forward|follow-up|re-check|retest|verify|confirm|avoid repeating|adjust|change|update|retry|keep|watch)\b/i.test(line) ||
-        /\b(this run|next run|delta|change|adjust|retry|re-check|retest|verify|confirm|avoid repeating|follow-up)\b/i.test(line);
-      const isOpenLoopAction = (line: string): boolean =>
-        /^(investigate|verify|confirm|re-check|retest|update|add|remove|fix|avoid|keep|watch|document)\b/i.test(line);
-
-      const invariantSection = parseSectionBullets(reflectionText, "Invariants");
-      const derivedSection = parseSectionBullets(reflectionText, "Derived");
-      const mergedSection = parseSectionBullets(reflectionText, "Invariants & Reflections");
-
-      const invariantsPrimary = cleanSliceLines(invariantSection).filter(isInvariantRuleLike);
-      const derivedPrimary = cleanSliceLines(derivedSection).filter(isDerivedDeltaLike);
-
-      const invariantLinesLegacy = cleanSliceLines(
-        mergedSection.filter((line) => /invariant|stable|policy|rule/i.test(line))
-      ).filter(isInvariantRuleLike);
-      const reflectionLinesLegacy = cleanSliceLines(
-        mergedSection.filter((line) => /reflect|inherit|derive|change|apply/i.test(line))
-      ).filter(isDerivedDeltaLike);
-      const openLoopLines = cleanSliceLines(parseSectionBullets(reflectionText, "Open loops / next actions"))
-        .filter(isOpenLoopAction)
-        .filter(isDerivedDeltaLike);
-      const durableDecisionLines = cleanSliceLines(parseSectionBullets(reflectionText, "Decisions (durable)"))
-        .filter(isInvariantRuleLike);
-
-      const invariants = invariantsPrimary.length > 0
-        ? invariantsPrimary
-        : (invariantLinesLegacy.length > 0 ? invariantLinesLegacy : durableDecisionLines);
-      const derived = derivedPrimary.length > 0
-        ? derivedPrimary
-        : [...reflectionLinesLegacy, ...openLoopLines];
-      return {
-        invariants: invariants.slice(0, 8),
-        derived: derived.slice(0, 10),
-      };
-    };
-
-    const parseMemoryMetadata = (metadataRaw: string | undefined): Record<string, unknown> => {
-      if (!metadataRaw) return {};
-      try {
-        const parsed = JSON.parse(metadataRaw);
-        return parsed && typeof parsed === "object" ? parsed as Record<string, unknown> : {};
-      } catch {
-        return {};
-      }
-    };
-
-    const storeReflectionToLanceDB = async (params: {
-      reflectionText: string;
-      sessionKey: string;
-      sessionId: string;
-      agentId: string;
-      command: string;
-      scope: string;
-      toolErrorSignals: ReflectionErrorSignal[];
-      runAt: number;
-      usedFallback: boolean;
-    }) => {
-      const slices = extractReflectionSlices(params.reflectionText);
-      const dateYmd = new Date(params.runAt).toISOString().split("T")[0];
-      const payload = [
-        `reflection:${params.scope} · ${dateYmd}`,
-        `Session Reflection (${new Date(params.runAt).toISOString()})`,
-        `Session Key: ${params.sessionKey}`,
-        `Session ID: ${params.sessionId}`,
-        "",
-        "Invariants:",
-        ...(slices.invariants.length > 0 ? slices.invariants.map((x) => `- ${x}`) : ["- (none)"]),
-        "",
-        "Derived:",
-        ...(slices.derived.length > 0 ? slices.derived.map((x) => `- ${x}`) : ["- (none)"]),
-        "",
-        "Reflection:",
-        params.reflectionText.trim(),
-      ].join("\n");
-
-      const vector = await embedder.embedPassage(payload);
-      const existing = await store.vectorSearch(vector, 1, 0.1, [params.scope]);
-      if (existing.length > 0 && existing[0].score > 0.97) {
-        return { stored: false, slices };
-      }
-
-      await store.store({
-        text: payload,
-        vector,
-        category: "reflection",
-        scope: params.scope,
-        importance: 0.75,
-        metadata: JSON.stringify({
-          type: "memory-reflection",
-          stage: "reflect-store",
-          sessionKey: params.sessionKey,
-          sessionId: params.sessionId,
-          agentId: params.agentId,
-          command: params.command,
-          storedAt: params.runAt,
-          invariants: slices.invariants,
-          derived: slices.derived,
-          usedFallback: params.usedFallback,
-          errorSignals: params.toolErrorSignals.map((s) => s.signatureHash),
-        }),
-      });
-      return { stored: true, slices };
-    };
-
     const loadAgentReflectionSlices = async (agentId: string, scopeFilter: string[]) => {
       const cacheKey = `${agentId}::${[...scopeFilter].sort().join(",")}`;
       const cached = reflectionByAgentCache.get(cacheKey);
       if (cached && Date.now() - cached.updatedAt < 15_000) return cached;
 
-      const now = Date.now();
       const entries = await store.list(scopeFilter, undefined, 120, 0);
-      const reflections = entries
-        .map((entry) => ({ entry, metadata: parseMemoryMetadata(entry.metadata) }))
-        .filter(({ metadata }) =>
-          metadata.type === "memory-reflection" && (metadata.agentId === agentId || metadata.agentId === "main")
-        )
-        .sort((a, b) => b.entry.timestamp - a.entry.timestamp)
-        .slice(0, 6);
-      const recentReflections = reflections.filter(
-        ({ entry }) => now - entry.timestamp <= DEFAULT_REFLECTION_DERIVED_MAX_AGE_MS
-      );
-
-      const invariants: string[] = [];
-      const derived: string[] = [];
-      for (const { metadata } of recentReflections) {
-        const inv = Array.isArray(metadata.invariants) ? metadata.invariants.map((x) => String(x)) : [];
-        for (const item of inv) {
-          if (item && !invariants.includes(item)) invariants.push(item);
-          if (invariants.length >= 8) break;
-        }
-      }
-
-      // Derived focus should come from the latest recent non-fallback reflection with actual delta lines.
-      const latestForDerived = recentReflections.find(({ metadata }) =>
-        metadata.usedFallback !== true &&
-        Array.isArray(metadata.derived) &&
-        metadata.derived.some((x: unknown) => typeof x === "string" && x.trim().length > 0 && !/^\(none/i.test(x.trim()))
-      );
-      if (latestForDerived) {
-        const der = Array.isArray(latestForDerived.metadata.derived)
-          ? latestForDerived.metadata.derived.map((x) => String(x))
-          : [];
-        for (const item of der) {
-          if (item && !derived.includes(item)) derived.push(item);
-          if (derived.length >= 10) break;
-        }
-      }
+      const { invariants, derived } = loadAgentReflectionSlicesFromEntries({
+        entries,
+        agentId,
+        deriveMaxAgeMs: DEFAULT_REFLECTION_DERIVED_MAX_AGE_MS,
+      });
       const next = { updatedAt: Date.now(), invariants, derived };
       reflectionByAgentCache.set(cacheKey, next);
       return next;
@@ -1968,7 +1791,7 @@ const memoryLanceDBProPlugin = {
               blocks.push(
                 [
                   "<derived-focus>",
-                  "Latest derived execution deltas from reflection memory:",
+                  "Weighted recent derived execution deltas from reflection memory:",
                   ...derivedLines.slice(0, 6).map((line, i) => `${i + 1}. ${line}`),
                   "</derived-focus>",
                 ].join("\n")
@@ -2114,7 +1937,7 @@ const memoryLanceDBProPlugin = {
             throw new Error(`Failed to allocate unique reflection file for ${dateStr} ${timeCompact}`);
           }
 
-          if (reflectionStoreToLanceDB && !reflectionGenerated.usedFallback) {
+          if (reflectionStoreToLanceDB) {
             const stored = await storeReflectionToLanceDB({
               reflectionText,
               sessionKey,
@@ -2125,6 +1948,10 @@ const memoryLanceDBProPlugin = {
               toolErrorSignals,
               runAt: nowTs,
               usedFallback: reflectionGenerated.usedFallback,
+              embedPassage: (text) => embedder.embedPassage(text),
+              vectorSearch: (vector, limit, minScore, scopeFilter) =>
+                store.vectorSearch(vector, limit, minScore, scopeFilter),
+              store: (entry) => store.store(entry),
             });
             if (sessionKey && stored.slices.derived.length > 0) {
               reflectionDerivedBySession.set(sessionKey, {

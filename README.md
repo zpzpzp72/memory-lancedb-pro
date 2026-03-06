@@ -194,16 +194,22 @@ Filters out low-quality content at both auto-capture and tool-store stages:
   - Filename uses high-resolution timestamp + agent/session token (with conflict-safe suffix), for example `HHMMSSmmm-agent-session[-xxxxxx].md`.
 - Store to LanceDB (optional):
   - Controlled by `memoryReflection.storeToLanceDB` (effective only under `sessionStrategy=memoryReflection`).
-  - Only non-fallback reflections are eligible for LanceDB persistence.
-  - Additional similarity dedupe is applied before write (`> 0.97` hit skips storing).
-  - Reflections are stored with category `reflection`, and are displayed as `reflection:<scope>`.
-  - Stored metadata includes reflection execution fields such as `type`, `stage`, `sessionKey`, `sessionId`, `agentId`, `command`, `storedAt`, `invariants[]`, `derived[]`, `usedFallback`, and `errorSignals[]`.
+  - Reflection persistence is split into two category=`reflection` entries:
+    - Inherit entry (`metadata.reflectionKind = "inherit"`, display tag `reflection:Inherit`)
+    - Derive entry (`metadata.reflectionKind = "derive"`, display tag `reflection:Derive`)
+  - Legacy combined reflection rows (only `metadata.invariants[]` + `metadata.derived[]`, without `reflectionKind`) remain readable/injectable with a safe legacy display path (`reflection:<scope>`).
+  - Additional similarity dedupe is applied per split entry before write (`> 0.97` hit skips storing that entry).
+  - New metadata fields explicitly include subtype and decay semantics: `reflectionKind`, `reflectionVersion`, `storedAt`, `invariants[]` or `derived[]`, and for derive entries `decayModel`, `decayMidpointDays`, `decayK`, `deriveBaseWeight`, `deriveQuality`, `deriveSource`.
 - Dedicated agent (optional): run reflection generation with another agent via `memoryReflection.agentId` (e.g. `memory-distiller`)
   - If configured `memoryReflection.agentId` is not found in `cfg.agents.list`, plugin logs a clear warning and falls back to runtime agent id.
   - For embedded runs, the plugin resolves the target agent's primary model ref (`provider/model`) and passes `provider` + `model` explicitly.
-- Inherit: `before_agent_start` injects `<inherited-rules>` from stable reflection invariants.
+- Inherit: `before_agent_start` injects `<inherited-rules>` from Inherit memories (`reflectionKind=inherit`) plus legacy `invariants[]` compatibility rows.
 - Derive: `before_prompt_build` injects `<derived-focus>` and `<error-detected>` blocks.
-  - `<derived-focus>` is sourced only from the latest recent non-fallback reflection and skips placeholder lines.
+  - `<derived-focus>` is sourced only from Derive memories (`reflectionKind=derive`) plus legacy `derived[]` compatibility rows.
+  - Multiple recent derive memories are weighted with logistic decay during reflection loading/injection (not in global retriever scoring):
+    - `weight = 1 / (1 + exp(k * (ageDays - midpointDays)))`
+    - defaults: `midpointDays = 3`, `k = 1.2`
+    - fallback-generated derive rows use lower base weight (`deriveBaseWeight = 0.35`) than normal derive rows (`1.0`)
   - Reflection-derived lines are extracted with `reflect|inherit|derive|change|apply` matching.
 - Error loop: `after_tool_call` captures and deduplicates tool error signatures for reminder/reflection context
 

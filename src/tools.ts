@@ -15,6 +15,7 @@ import { isNoise } from "./noise-filter.js";
 import type { MemoryScopeManager } from "./scopes.js";
 import type { Embedder } from "./embedder.js";
 import { ensureSelfImprovementLearningFiles } from "./self-improvement-files.js";
+import { getDisplayCategoryTag } from "./reflection-metadata.js";
 
 // ============================================================================
 // Types
@@ -75,29 +76,6 @@ function sanitizeMemoryForSerialization(results: RetrievalResult[]) {
     score: r.score,
     sources: r.sources,
   }));
-}
-
-function parseEntryMetadata(entry: { metadata?: string }): Record<string, unknown> {
-  if (!entry.metadata) return {};
-  try {
-    const parsed = JSON.parse(entry.metadata);
-    return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
-  } catch {
-    return {};
-  }
-}
-
-function isReflectionEntry(entry: { category: string; metadata?: string }): boolean {
-  if (entry.category === "reflection") return true;
-  const metadata = parseEntryMetadata(entry);
-  return metadata.type === "memory-reflection";
-}
-
-function getDisplayCategoryTag(entry: { category: string; scope: string; metadata?: string }): string {
-  if (isReflectionEntry(entry)) {
-    return `reflection:${entry.scope}`;
-  }
-  return `${entry.category}:${entry.scope}`;
 }
 
 function resolveWorkspaceDir(toolCtx: unknown, fallback?: string): string {

@@ -194,16 +194,22 @@ Query → BM25 FTS ─────┘
   - 文件名为高精度时间戳 + agent/session token（带冲突后缀），例如 `HHMMSSmmm-agent-session[-xxxxxx].md`。
 - 写入 LanceDB（可选）：
   - 由 `memoryReflection.storeToLanceDB` 控制（且仅在 `sessionStrategy=memoryReflection` 下生效）。
-  - 只有非 fallback 反思才会进入 LanceDB 持久化流程。
-  - 写入前会做相似度去重（命中 `> 0.97` 则跳过入库）。
-  - 反思记忆写入时使用分类 `reflection`，展示标签为 `reflection:<scope>`。
-  - 写入的 metadata 会包含反思执行字段，例如 `type`、`stage`、`sessionKey`、`sessionId`、`agentId`、`command`、`storedAt`、`invariants[]`、`derived[]`、`usedFallback`、`errorSignals[]`。
+  - 反思持久化会拆分为两条 category=`reflection` 记录：
+    - Inherit 记录（`metadata.reflectionKind = "inherit"`，展示为 `reflection:Inherit`）
+    - Derive 记录（`metadata.reflectionKind = "derive"`，展示为 `reflection:Derive`）
+  - 旧版合并反思记录（只有 `metadata.invariants[]` + `metadata.derived[]`，没有 `reflectionKind`）会继续兼容读取/注入，并走安全的旧版展示路径（`reflection:<scope>`）。
+  - 写入前会对每条拆分记录做相似度去重（命中 `> 0.97` 时仅跳过该条写入）。
+  - 新版 metadata 会显式写入子类型与衰减语义：`reflectionKind`、`reflectionVersion`、`storedAt`、`invariants[]` 或 `derived[]`；Derive 还包含 `decayModel`、`decayMidpointDays`、`decayK`、`deriveBaseWeight`、`deriveQuality`、`deriveSource`。
 - 独立代理（可选）：通过 `memoryReflection.agentId` 指定用于反思生成的代理（例如 `memory-distiller`）
   - 若配置的 `memoryReflection.agentId` 不在 `cfg.agents.list` 中，插件会明确 `warn` 并回退到当前 runtime agent id。
   - 对 embedded 运行，插件会解析目标代理主模型引用（`provider/model`），并显式传入 `provider` 与 `model`。
-- Inherit：`before_agent_start` 注入 `<inherited-rules>`，来源是稳定的 reflection invariants。
+- Inherit：`before_agent_start` 注入 `<inherited-rules>`，来源仅为 Inherit 记忆（`reflectionKind=inherit`）和旧版兼容记录中的 `invariants[]`。
 - Derive：`before_prompt_build` 注入 `<derived-focus>` 与 `<error-detected>`。
-  - `<derived-focus>` 仅取最近且非 fallback 的反思，并过滤占位行。
+  - `<derived-focus>` 来源仅为 Derive 记忆（`reflectionKind=derive`）和旧版兼容记录中的 `derived[]`。
+  - 反思加载/注入阶段会对多条近期 derive 记忆做 logistic 衰减加权（不会改动全局 retriever 评分）：
+    - `weight = 1 / (1 + exp(k * (ageDays - midpointDays)))`
+    - 默认值：`midpointDays = 3`、`k = 1.2`
+    - fallback 生成的 derive 记录使用更低基础权重（`deriveBaseWeight = 0.35`，普通 derive 为 `1.0`）
   - 派生行提取关键词：`reflect|inherit|derive|change|apply`。
 - 错误闭环：`after_tool_call` 捕获并去重工具错误签名，用于提醒与反思上下文
 
