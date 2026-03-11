@@ -2060,7 +2060,7 @@ const memoryLanceDBProPlugin = {
               const displayTier = tierOverrides.get(r.entry.id) || metaObj.tier || "";
               const tierPrefix = displayTier ? `[${displayTier.charAt(0).toUpperCase()}]` : "";
               const abstract = metaObj.l0_abstract || r.entry.text;
-              return `- ${tierPrefix}[${displayCategory}:${r.entry.scope}] ${sanitizeForContext(abstract)} (${(r.score * 100).toFixed(0)}%${r.sources?.bm25 ? ", vector+BM25" : ""}${r.sources?.reranked ? "+reranked" : ""})`;
+              return `- ${tierPrefix}[${displayCategory}:${r.entry.scope}] ${sanitizeForContext(abstract)}`;
             })
             .join("\n");
 

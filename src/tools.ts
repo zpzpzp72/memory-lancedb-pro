@@ -482,13 +482,8 @@ export function registerMemoryRecallTool(
 
           const text = results
             .map((r, i) => {
-              const sources = [];
-              if (r.sources.vector) sources.push("vector");
-              if (r.sources.bm25) sources.push("BM25");
-              if (r.sources.reranked) sources.push("reranked");
-
               const categoryTag = getDisplayCategoryTag(r.entry);
-              return `${i + 1}. [${r.entry.id}] [${categoryTag}] ${r.entry.text} (${(r.score * 100).toFixed(0)}%${sources.length > 0 ? `, ${sources.join("+")}` : ""})`;
+              return `${i + 1}. [${r.entry.id}] [${categoryTag}] ${r.entry.text}`;
             })
             .join("\n");
 
